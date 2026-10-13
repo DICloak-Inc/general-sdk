@@ -6,6 +6,8 @@
 
 ### 安装
 
+在 Linux 环境中接入时，浏览器路径、无桌面启动和代理配置的用法见 [Linux 接入指南](./docs/linux-usage.md)。
+
 #### 步骤 1：安装 SDK
 
 将 **general-sdk.zip** 解压在项目根目录下（或者你喜欢的其他任何地方），修改 package.json：
@@ -72,7 +74,7 @@ async function main() {
   const { id, wsUrl } = await sdk.launch({
     instanceId: instanceId,
     fingerprintConfig: fingerprintConfig.config,
-    chromiumPath: '/path/to/chromium.exe', // 本次启动使用的浏览器内核路径，必填
+    chromiumPath: '/path/to/browser', // 本次启动使用的浏览器内核可执行文件路径，必填
   });
 
   console.log(`浏览器启动成功: ${id}`);
@@ -255,7 +257,18 @@ export interface ProxyProps {
   ipInfo?: IpInfo;
 }
 
+/** 自建 Passkey 服务配置 */
+export interface PasskeyConfig {
+  server: string; // Passkey 服务器地址，不能为空
+  uid: string; // 用户 ID，不能为空
+  token: string; // Passkey 请求的 session token，不能为空
+  headers?: Record<string, string>; // 自定义请求头
+  passphrase?: string; // 主密码
+}
+
 export interface AdvancedConfig {
+  /** 自建 Passkey 服务配置 */
+  passkey?: PasskeyConfig;
   /** 是否恢复上次会话 */
   restoreLast?: 'enable' | 'disable';
   /** Google 翻译默认目标语言代码，例如 ja、en */
@@ -582,6 +595,30 @@ const fonts = createRandomFontValue({
 - 建议 `userAgent`、目标系统、`platformVersion` 三者保持一致，否则业务站点可能识别出环境不一致。
 - iOS 场景通常重点是传正确的 UA；`platformVersion` 主要用于配合 Client Hint 场景。
 
+#### 自建 Passkey 服务
+
+使用支持自建 Passkey 的配套内核时，业务方可以通过 `advancedConfig.passkey` 传入服务地址、用户 ID、session token，以及可选的自定义请求头和主密码：
+
+```javascript
+const { instanceId, fingerprintConfig } = await sdk.createFingerprint({
+  advancedConfig: {
+    passkey: {
+      server: 'https://passkey.example.com',
+      uid: 'your-user-id',
+      token: 'your-session-token',
+    },
+  },
+});
+
+await sdk.launch({
+  instanceId,
+  fingerprintConfig: fingerprintConfig.config,
+  chromiumPath: '/path/to/browser',
+});
+```
+
+SDK 将该对象按 `Base64(JSON)` 格式写入内核启动参数 `passkey`，并沿用现有加密 launch-key 流程。未配置时不下发该参数。字段说明、完整示例和内核要求见 [Passkey 参数指南](./docs/passkey.md)。
+
 #### Google 翻译默认目标语言
 
 业务方可以通过 `advancedConfig.translateRecentTarget` 指定 Chromium 中 Google 翻译功能默认选中的目标语言：
@@ -798,6 +835,8 @@ const { id, wsUrl } = await sdk.launch({
 
 `chromiumPath` 必须在每次启动实例时显式传入。这样可以避免多个环境混用不同内核版本时，某次启动误用其他环境的内核路径。
 
+在 Linux 服务器等没有桌面的环境中，启动时增加 `headless: true`。需要显示浏览器窗口时，运行环境应具备桌面或显示服务，具体示例见 [Linux 接入指南](./docs/linux-usage.md)。
+
 #### 实例状态查询
 
 ```javascript
@@ -829,7 +868,7 @@ await sdk.close('instance-id');
 
 SDK 默认不会读取或使用本机系统代理。业务方在 `createFingerprint` 中传入的 `proxy` 会直接作为浏览器实例的一级代理下发给内核。
 
-如果确实需要让某个实例读取本机系统代理，可以在启动实例时显式传 `useSystemProxy: true`：
+Windows、macOS 上，如果确实需要让某个实例读取本机系统代理，可以在启动实例时显式传 `useSystemProxy: true`：
 
 ```javascript
 const instance = await sdk.launch({
@@ -840,6 +879,8 @@ const instance = await sdk.launch({
 ```
 
 开启 `useSystemProxy` 后，如果同时配置了业务代理，SDK 会将本机系统代理作为一级代理，将业务代理作为二级代理传给内核。未开启时，即使本机存在系统代理，也不会生成系统代理相关的 `--proxy-server` 参数。
+
+Linux 上请在 `createFingerprint` 中显式配置 `proxy`；`useSystemProxy: true` 不会自动读取 Linux 系统代理。
 
 ```javascript
 // HTTP代理
@@ -921,8 +962,8 @@ await sdk.setStandardCookies(instanceId, cookies);
 ## 🛠️ 你需要准备
 
 - Node.js >= 18.0.0
-- Windows/macOS
-- 可用的 Chromium 内核
+- 与运行环境匹配的 SDK 安装包
+- 与所选 SDK、操作系统和架构配套的浏览器内核
 
 ## 📖 错误处理
 
@@ -947,30 +988,6 @@ await sdk.initialize({
   logLevel: 'debug', // error, warn, info, debug
 });
 ```
-
-## 📤 仅发布文档（维护者）
-
-只更新 General SDK 的对外文档：
-
-```bash
-npm run publish:docs:general
-```
-
-只更新 DIC Browser SDK 的对外文档：
-
-```bash
-npm run publish:docs:dic
-```
-
-同时更新两套对外文档：
-
-```bash
-npm run publish:docs:all
-```
-
-发布命令会为目标 profile 渲染 README，并同步 README 中引用的全部 `docs/*.md`。每次都会处理完整关联文档集合，不根据本地 Git 修改状态筛选文件。
-
-GitHub Token 可以通过 `GITHUB_TOKEN`、`GH_TOKEN` 或被 Git 忽略的 `.env.local` 提供。这些命令不会构建 SDK，也不会创建或修改 GitHub Release、删除或上传 ZIP。
 
 ## 📄 许可证
 
